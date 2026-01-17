@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>图片横竖屏预览</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #222;
+            overflow: hidden;
+            position: relative;
+            touch-action: manipulation;
+        }
+        /* 竖屏容器：灰色背景 无需图片文件 */
+        .vertical-groups {
+            display: flex;
+            width: 100vw;
+            height: 100vh;
+            transition: transform 0.3s ease-out;
+        }
+        .pic-group {
+            flex: 0 0 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            background-color: #cccccc;
+            align-items: center;
+            justify-content: center;
+            padding: 20px 0;
+        }
+        .pic {
+            width: 100%;
+            aspect-ratio: 16/9;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 24px;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+        }
+        /* 横屏：单张16:9图片全屏适配 */
+        .horizontal-wrap {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vh;
+            height: 100vw;
+            display: none;
+            overflow: hidden;
+            z-index: 90;
+            transform: rotate(90deg) translate(0, -100vw);
+            transform-origin: top left;
+        }
+        .horizontal-slide {
+            display: flex;
+            width: 100%;
+            height: 100%;
+            transition: transform 0.2s ease-out;
+        }
+        .horizontal-slide .pic {
+            flex: 0 0 100%;
+            height: 100%;
+            aspect-ratio: unset;
+        }
+        /* 按钮组样式不变 */
+        .btns {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            gap: 10px;
+            z-index: 99;
+            transition: transform 0.2s ease;
+        }
+        .btns.landscape {
+            transform: rotate(90deg);
+            bottom: 180px;
+            left: 20px;
+            top: auto;
+            right: auto;
+            transform-origin: bottom left;
+        }
+        .btn {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            border: none;
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .mute-btn {
+            font-size: 28px;
+        }
+        .mute-btn.muted::after {
+            content: '';
+            position: absolute;
+            width: 28px;
+            height: 2px;
+            background: #fff;
+            transform: rotate(45deg);
+        }
+        .screen-icon {
+            font-size: 22px;
+        }
+        audio {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="vertical-groups" id="verticalGroups"></div>
+    <div class="horizontal-wrap" id="horizontalWrap">
+        <div class="horizontal-slide" id="horizontalSlide"></div>
+    </div>
+
+    <div class="btns" id="btns">
+        <button class="btn lang-btn" onclick="toggleLang()">中</button>
+        <button class="btn mute-btn" onclick="toggleMute()">♪</button>
+        <button class="btn screen-btn" onclick="toggleScreenMode()">
+            <span class="screen-icon" id="screenIcon">📱</span>
+        </button>
+    </div>
+
+    <audio id="audio" autoplay loop>
+        <source src="" type="audio/mpeg">
+    
+
+    <script>
+        // ========== 核心配置（仅改这里） ==========
+        const imgCount = 32;
+        const imgPathPrefix = './images/';
+        const imgFormat = 'jpg';
+        const bgColors = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#1abc9c', '#e67e22'];
+        const slideThreshold = 15;
+
+        const verticalGroups = document.getElementById('verticalGroups');
+        const horizontalWrap = document.getElementById('horizontalWrap');
+        const horizontalSlide = document.getElementById('horizontalSlide');
+        const btns = document.getElementById('btns');
+        const screenIcon = document.getElementById('screenIcon');
+        
+        let groupCount = Math.ceil(imgCount / 2);
+        let currentGroupIndex = 0;
+        let currentHorizontalIndex = 0;
+        let isLandscapeMode = false;
+        let startX, startY, isDragging = false;
+
+        // ========== 初始化图片 ==========
+        function initImages() {
+            for (let i = 0; i < groupCount; i++) {
+                const group = document.createElement('div');
+                group.className = 'pic-group';
+                const pic1 = createPicElement(i * 2 + 1);
+                const pic2 = (i * 2 + 2) <= imgCount ? createPicElement(i * 2 + 2) : null;
+                group.appendChild(pic1);
+                if (pic2) group.appendChild(pic2);
+                verticalGroups.appendChild(group);
+            }
+            for (let i = 1; i <= imgCount; i++) {
+                horizontalSlide.appendChild(createPicElement(i));
+            }
+        }
+
+        function createPicElement(index) {
+            const pic = document.createElement('div');
+            pic.className = 'pic';
+            pic.textContent = `图片${index}`;
+            pic.style.backgroundColor = bgColors[(index - 1) % bgColors.length];
+            pic.style.backgroundImage = `url(${imgPathPrefix}${index}.${imgFormat})`;
+            return pic;
+        }
+
+        // ========== 滑动逻辑 ==========
+        document.addEventListener('touchstart', (e) => {
+            isDragging = true;
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+        }, { passive: true });
+
+        document.addEventListener('touchend', () => {
+            isDragging = false;
+        }, { passive: true });
+
+        document.addEventListener('touchmove', (e) => {
+            if (!isDragging) return;
+            const moveX = e.touches[0].clientX;
+            const moveY = e.touches[0].clientY;
+            const diffX = startX - moveX;
+            const diffY = startY - moveY;
+
+            if (isLandscapeMode) {
+                if (Math.abs(diffY) > slideThreshold) {
+                    if (diffY > 0 && currentHorizontalIndex < imgCount - 1) {
+                        currentHorizontalIndex++;
+                        horizontalSlide.style.transform = `translateX(-${currentHorizontalIndex * 100}%)`;
+                    } else if (diffY < 0 && currentHorizontalIndex > 0) {
+                        currentHorizontalIndex--;
+                        horizontalSlide.style.transform = `translateX(-${currentHorizontalIndex * 100}%)`;
+                    }
+                    startY = moveY;
+                    isDragging = false;
+                }
+            } else {
+                if (Math.abs(diffX) > slideThreshold) {
+                    if (diffX > 0 && currentGroupIndex < groupCount - 1) {
+                        currentGroupIndex++;
+                        verticalGroups.style.transform = `translateX(-${currentGroupIndex * 100}%)`;
+                    } else if (diffX < 0 && currentGroupIndex > 0) {
+                        currentGroupIndex--;
+                        verticalGroups.style.transform = `translateX(-${currentGroupIndex * 100}%)`;
+                    }
+                    startX = moveX;
+                    isDragging = false;
+                }
+            }
+        }, { passive: true });
+
+        // ========== 横竖屏切换 ==========
+        function toggleScreenMode() {
+            isLandscapeMode = !isLandscapeMode;
+            if (isLandscapeMode) {
+                verticalGroups.style.display = 'none';
+                horizontalWrap.style.display = 'block';
+                screenIcon.textContent = '📱';
+                screenIcon.style.transform = 'rotate(90deg)';
+                btns.classList.add('landscape');
+                currentHorizontalIndex = currentGroupIndex * 2;
+                horizontalSlide.style.transform = `translateX(-${currentHorizontalIndex * 100}%)`;
+            } else {
+                horizontalWrap.style.display = 'none';
+                verticalGroups.style.display = 'flex';
+                screenIcon.textContent = '📱';
+                screenIcon.style.transform = 'rotate(0)';
+                btns.classList.remove('landscape');
+                currentGroupIndex = Math.floor(currentHorizontalIndex / 2);
+                verticalGroups.style.transform = `translateX(-${currentGroupIndex * 100}%)`;
+            }
+        }
+
+        // ========== 音频切换 ==========
+        const langBtn = document.querySelector('.lang-btn');
+        const audio = document.getElementById('audio');
+        let isZh = true;
+        function toggleLang() {
+            isZh = !isZh;
+            langBtn.textContent = isZh ? '中' : 'EN';
+            audio.src = isZh ? './zh.m4a' : './en.m4a';
+            audio.load();
+            audio.play();
+        }
+
+        const muteBtn = document.querySelector('.mute-btn');
+        function toggleMute() {
+            audio.muted = !audio.muted;
+            muteBtn.classList.toggle('muted');
+        }
+
+        // 页面加载初始化
+        window.onload = initImages;
+    </script>
+</body>
+</html>
